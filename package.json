@@ -1,7 +1,6 @@
-{
-  "name": "trends-backend",
-  "version": "1.0.0",
-  "description": "Backend server for trends website",
+{{
+  "name": "trends-backend-stable",
+  "version": "2.0.0",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -11,8 +10,5 @@
     "cors": "^2.8.5",
     "body-parser": "^1.20.2",
     "node-fetch": "^2.6.7"
-  },
-  "engines": {
-    "node": "18.x"
   }
 }
