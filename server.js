@@ -8,12 +8,10 @@ const fetch = require('node-fetch');
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// --- المسار الجديد والدائم لقاعدة البيانات ---
-// هذا هو التعديل الأهم. سيحفظ البيانات على القرص الثابت.
+// المسار الدائم للتخزين على Render
 const DATA_DIR = '/data';
 const DB_PATH = path.join(DATA_DIR, 'db.json');
 
-// --- دالة لضمان وجود المجلد وقاعدة البيانات ---
 function initializeDatabase() {
     if (!fs.existsSync(DATA_DIR)) {
         fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -25,28 +23,6 @@ function initializeDatabase() {
     }
 }
 
-// --- باقي الكود يبقى كما هو تماماً ---
-function readDB() { /* ... نفس الكود من الإجابة السابقة ... */ }
-function writeDB(data) { /* ... نفس الكود من الإجابة السابقة ... */ }
-async function getFacebookThumbnail(postLink) { /* ... نفس الكود من الإجابة السابقة ... */ }
-async function getTikTokThumbnail(videoUrl) { /* ... نفس الكود من الإجابة السابقة ... */ }
-async function fetchAndUpdateYoutubeData() { /* ... نفس الكود من الإجابة السابقة ... */ }
-
-app.use(cors({ origin: '*' }));
-app.use(bodyParser.json({ limit: '50mb' }));
-
-app.get('/api/trends', (req, res) => { /* ... نفس الكود من الإجابة السابقة ... */ });
-app.get('/api/youtube/:countryCode', async (req, res) => { /* ... نفس الكود من الإجابة السابقة ... */ });
-app.post('/api/update', async (req, res) => { /* ... نفس الكود من الإجابة السابقة ... */ });
-
-app.listen(PORT, () => {
-    initializeDatabase();
-    console.log(`Server is running on port ${PORT} and using persistent storage at ${DB_PATH}`);
-    // لا حاجة لجلب يوتيوب هنا، سيتم جلبه من الموقع العام عند الطلب
-});
-
-
-// --- لصق الدوال المساعدة الكاملة هنا ---
 function readDB() {
     try {
         const dbRaw = fs.readFileSync(DB_PATH, 'utf-8');
@@ -55,9 +31,11 @@ function readDB() {
         return { facebook: [], tiktok: {}, twitter: {}, youtube: [] };
     }
 }
+
 function writeDB(data) {
     fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
 }
+
 async function getFacebookThumbnail(postLink) {
     if (!postLink || !postLink.includes('facebook.com')) return null;
     const proxyUrl = 'https://solitary-disk-d143.kakaouali.workers.dev/?url=';
@@ -65,14 +43,15 @@ async function getFacebookThumbnail(postLink) {
         const response = await fetch(proxyUrl + encodeURIComponent(postLink));
         if (!response.ok) return null;
         const html = await response.text();
-        const patterns = [ /<meta\s+property="og:image"\s+content="([^"]+)"/, /<meta\s+property="og:image:secure_url"\s+content="([^"]+)"/, /<img\s+class="[^"]*scaledImageFitWidth[^"]*"\s+src="([^"]+)"/, /<img\s+src="([^"]+)"\s+alt="[^"]*may be an image[^"]*"/ ];
+        const patterns = [/<meta\s+property="og:image"\s+content="([^"]+)"/, /<meta\s+property="og:image:secure_url"\s+content="([^"]+)"/, /<img\s+class="[^"]*scaledImageFitWidth[^"]*"\s+src="([^"]+)"/];
         for (const pattern of patterns) {
             const match = html.match(pattern);
-            if (match && match[1]) { return match[1].replace(/&amp;/g, '&'); }
+            if (match && match[1]) return match[1].replace(/&amp;/g, '&');
         }
         return null;
     } catch (error) { return null; }
 }
+
 async function getTikTokThumbnail(videoUrl) {
     try {
         const response = await fetch(`https://www.tiktok.com/oembed?url=${videoUrl}`);
@@ -81,42 +60,50 @@ async function getTikTokThumbnail(videoUrl) {
         return data.thumbnail_url || null;
     } catch (error) { return null; }
 }
-app.get('/api/trends', (req, res) => {
-    console.log('Serving main trends to public site.');
-    res.json(readDB());
-});
+
+app.use(cors({ origin: '*' }));
+app.use(bodyParser.json({ limit: '50mb' }));
+
+// --- الواجهات البرمجية (APIs) ---
+app.get('/api/trends', (req, res) => res.json(readDB()));
+
 app.get('/api/youtube/:countryCode', async (req, res) => {
     const { countryCode } = req.params;
-    console.log(`Fetching YouTube for ${countryCode}`);
     const apiKey = 'AIzaSyB471LcL9_V96k1VOh3sKH909E3ibKND3U';
     const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&chart=mostPopular&regionCode=${countryCode}&maxResults=20&key=${apiKey}`;
     try {
         const response = await fetch(url);
-        const data = await response.json();
-        res.json(data.items || []);
+        res.json(await response.json());
     } catch (e) {
         res.status(500).json({ error: 'Failed to fetch YouTube data' });
     }
 });
+
 app.post('/api/update', async (req, res) => {
     const { platform, data } = req.body;
     if (!platform || !data) return res.status(400).json({ message: 'Missing data' });
+    
     console.log(`Received update for: ${platform}`);
     const db = readDB();
     let finalData = data;
+
     if (platform === 'facebook' && Array.isArray(data)) {
-        console.log("Enriching Facebook data...");
-        finalData = await Promise.all( data.map(async (post) => ({ ...post, thumbnailUrl: await getFacebookThumbnail(post.postLink) })) );
+        finalData = await Promise.all(data.map(async (post) => ({ ...post, thumbnailUrl: await getFacebookThumbnail(post.postLink) })));
     }
     if (platform === 'tiktok' && typeof data === 'object') {
-        console.log("Enriching TikTok data...");
         const enrichedTikTok = {};
         for (const country in data) {
-            enrichedTikTok[country] = await Promise.all( data[country].map(async (videoUrl) => ({ url: videoUrl, thumbnailUrl: await getTikTokThumbnail(videoUrl) })) );
+            enrichedTikTok[country] = await Promise.all(data[country].map(async (videoUrl) => ({ url: videoUrl, thumbnailUrl: await getTikTokThumbnail(videoUrl) })));
         }
         finalData = enrichedTikTok;
     }
+    
     db[platform] = finalData;
     writeDB(db);
     res.status(200).json({ message: 'Update successful' });
+});
+
+app.listen(PORT, () => {
+    initializeDatabase();
+    console.log(`Server is running on port ${PORT} and using persistent storage at ${DB_PATH}`);
 });
