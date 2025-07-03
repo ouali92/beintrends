@@ -64,11 +64,24 @@ async function getFacebookThumbnail(postLink) {
 
 async function getTikTokThumbnail(videoUrl) {
     try {
-        const response = await fetch(`https://www.tiktok.com/oembed?url=${videoUrl}`);
-        if (!response.ok) return null;
-        const data = await response.json();
-        return data.thumbnail_url || null;
-    } catch (error) { return null; }
+        // المحاولة الأولى: استخدام oembed الرسمي
+        const oembedResponse = await fetch(`https://www.tiktok.com/oembed?url=${videoUrl}`);
+        if (oembedResponse.ok) {
+            const data = await oembedResponse.json();
+            if (data.thumbnail_url) return data.thumbnail_url;
+        }
+        
+        // المحاولة الثانية: استخراج الفيديو ID واستخدام رابط الصورة المباشر
+        const videoId = videoUrl.match(/\/video\/(\d+)/)?.[1];
+        if (videoId) {
+            return `https://www.tiktok.com/api/img/?itemId=${videoId}`;
+        }
+        
+        return null;
+    } catch (error) {
+        console.error(`Error fetching TikTok thumbnail for ${videoUrl}:`, error);
+        return null;
+    }
 }
 
 async function fetchAndUpdateYoutubeData() {
