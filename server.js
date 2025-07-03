@@ -62,19 +62,25 @@ async function getFacebookThumbnail(postLink) {
     } catch (error) { return null; }
 }
 
+// --- دالة TikTok النهائية والأكثر قوة ---
 async function getTikTokThumbnail(videoUrl) {
     try {
-        // المحاولة الأولى: استخدام oembed الرسمي
+        // المحاولة الأولى: استخدام oembed الرسمي (سريع وموثوق)
         const oembedResponse = await fetch(`https://www.tiktok.com/oembed?url=${videoUrl}`);
         if (oembedResponse.ok) {
             const data = await oembedResponse.json();
             if (data.thumbnail_url) return data.thumbnail_url;
         }
         
-        // المحاولة الثانية: استخراج الفيديو ID واستخدام رابط الصورة المباشر
-        const videoId = videoUrl.match(/\/video\/(\d+)/)?.[1];
-        if (videoId) {
-            return `https://www.tiktok.com/api/img/?itemId=${videoId}`;
+        // المحاولة الثانية (الخطة ب): قراءة صفحة الفيديو مباشرة للبحث عن الصورة
+        // هذه الطريقة مشابهة لطريقة فيسبوك وهي قوية جداً
+        const videoPageResponse = await fetch(videoUrl);
+        if(videoPageResponse.ok) {
+            const html = await videoPageResponse.text();
+            const match = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/);
+            if (match && match[1]) {
+                return match[1];
+            }
         }
         
         return null;
@@ -83,6 +89,7 @@ async function getTikTokThumbnail(videoUrl) {
         return null;
     }
 }
+
 
 async function fetchAndUpdateYoutubeData() {
     console.log("Fetching YouTube Data for multiple regions...");
