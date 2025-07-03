@@ -9,95 +9,143 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const DB_PATH = path.join(__dirname, 'db.json');
 
-// إعدادات CORS الموسعة
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+// قائمة الدول الجديدة لليوتيوب
+const YOUTUBE_REGIONS = [
+    'SA', 'EG', 'US', 'GB', 'FR', 'DE', 'CA', 'AU', 'BR', 'IN',
+    'JP', 'KR', 'RU', 'MX', 'IT', 'ES', 'TR', 'NL', 'SE', 'CH',
+    'AE', 'QA', 'KW', 'BH', 'OM', 'DZ', 'MA', 'TN', 'IQ', 'JO'
+];
 
-app.use(bodyParser.json({ limit: '50mb' }));
-
-// إنشاء قاعدة بيانات إذا لم تكن موجودة
+// --- دوال مساعدة ---
 function initializeDatabase() {
     if (!fs.existsSync(DB_PATH)) {
-        console.log("Creating new database file...");
+        console.log("db.json not found, creating a new one.");
         const initialData = { facebook: [], tiktok: {}, twitter: {}, youtube: {} };
         fs.writeFileSync(DB_PATH, JSON.stringify(initialData, null, 2));
     }
 }
 
-// قراءة قاعدة البيانات
 function readDB() {
     try {
-        return JSON.parse(fs.readFileSync(DB_PATH, 'utf-8'));
+        const dbRaw = fs.readFileSync(DB_PATH, 'utf-8');
+        return JSON.parse(dbRaw);
     } catch (error) {
-        console.error("Database read error:", error);
+        console.error("Could not read db.json:", error);
         return { facebook: [], tiktok: {}, twitter: {}, youtube: {} };
     }
 }
 
-// كتابة قاعدة البيانات
 function writeDB(data) {
-    try {
-        fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
-    } catch (error) {
-        console.error("Database write error:", error);
-    }
+    fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
 }
 
-// واجهة API للبيانات
-app.get('/api/trends', (req, res) => {
+async function getFacebookThumbnail(postLink) {
+    if (!postLink || !postLink.includes('facebook.com')) return null;
+    const proxyUrl = 'https://solitary-disk-d143.kakaouali.workers.dev/?url=';
     try {
-        const data = readDB();
-        console.log('Successfully served trends data');
-        res.status(200).json(data);
-    } catch (error) {
-        console.error('Failed to serve trends:', error);
-        res.status(500).json({ error: 'Failed to load data' });
-    }
-});
-
-// واجهة التحديث
-app.post('/api/update', async (req, res) => {
-    try {
-        const { platform, data } = req.body;
-        if (!platform || !data) {
-            return res.status(400).json({ message: 'بيانات ناقصة' });
+        const response = await fetch(proxyUrl + encodeURIComponent(postLink));
+        if (!response.ok) return null;
+        const html = await response.text();
+        const patterns = [
+            /<meta\s+property="og:image"\s+content="([^"]+)"/,
+            /<meta\s+property="og:image:secure_url"\s+content="([^"]+)"/,
+            /<img\s+class="[^"]*scaledImageFitWidth[^"]*"\s+src="([^"]+)"/,
+            /<img\s+src="([^"]+)"\s+alt="[^"]*may be an image[^"]*"/
+        ];
+        for (const pattern of patterns) {
+            const match = html.match(pattern);
+            if (match && match[1]) {
+                return match[1].replace(/&amp;/g, '&');
+            }
         }
+        return null;
+    } catch (error) { return null; }
+}
 
-        const db = readDB();
-        db[platform] = data;
-        writeDB(db);
+async function getTikTokThumbnail(videoUrl) {
+    try {
+        const response = await fetch(`https://www.tiktok.com/oembed?url=${videoUrl}`);
+        if (!response.ok) return null;
+        const data = await response.json();
+        return data.thumbnail_url || null;
+    } catch (error) { return null; }
+}
 
-        console.log(`Updated ${platform} data successfully`);
-        res.status(200).json({ message: 'تم التحديث بنجاح' });
-    } catch (error) {
-        console.error('Update failed:', error);
-        res.status(500).json({ error: 'فشل التحديث' });
+async function fetchAndUpdateYoutubeData() {
+    console.log("Fetching YouTube Data for multiple regions...");
+    const apiKey = 'AIzaSyB471LcL9_V96k1VOh3sKH909E3ibKND3U';
+    const db = readDB();
+    
+    if (!db.youtube) db.youtube = {};
+    
+    for (const regionCode of YOUTUBE_REGIONS) {
+        const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&chart=mostPopular&regionCode=${regionCode}&maxResults=20&key=${apiKey}`;
+        try {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`YouTube API failed for ${regionCode}`);
+            const youtubeData = await response.json();
+            db.youtube[regionCode] = youtubeData.items || [];
+            console.log(`Updated YouTube data for ${regionCode}`);
+        } catch (error) {
+            console.error(`Failed to update YouTube for ${regionCode}:`, error.message);
+        }
     }
+    
+    writeDB(db);
+    console.log("YouTube Data Updated successfully for all regions.");
+}
+
+// --- إعدادات الخادم ---
+app.use(cors({ origin: '*' }));
+app.use(bodyParser.json({ limit: '50mb' }));
+
+// --- الواجهات البرمجية (APIs) ---
+app.get('/api/trends', (req, res) => {
+    console.log('Serving all trends to public site.');
+    res.json(readDB());
 });
 
-// صفحة الاختبار
-app.get('/test', (req, res) => {
-    res.send(`
-        <h1>الخادم يعمل بنجاح!</h1>
-        <p>يمكنك اختبار واجهة البرمجة (API) عبر الروابط التالية:</p>
-        <ul>
-            <li><a href="/api/trends">/api/trends</a> - لاستعراض البيانات</li>
-        </ul>
-    `);
+app.post('/api/update', async (req, res) => {
+    const { platform, data } = req.body;
+    if (!platform || !data) return res.status(400).json({ message: 'Missing data' });
+    
+    console.log(`Received update for: ${platform}`);
+    const db = readDB();
+    let finalData = data;
+
+    if (platform === 'facebook' && Array.isArray(data)) {
+        console.log("Enriching Facebook data with thumbnails...");
+        finalData = await Promise.all(
+            data.map(async (post) => ({
+                ...post,
+                thumbnailUrl: await getFacebookThumbnail(post.postLink)
+            }))
+        );
+    }
+
+    if (platform === 'tiktok' && typeof data === 'object') {
+        console.log("Enriching TikTok data with thumbnails...");
+        const enrichedTikTok = {};
+        for (const country in data) {
+            enrichedTikTok[country] = await Promise.all(
+                data[country].map(async (videoUrl) => ({
+                    url: videoUrl,
+                    thumbnailUrl: await getTikTokThumbnail(videoUrl)
+                }))
+            );
+        }
+        finalData = enrichedTikTok;
+    }
+    
+    db[platform] = finalData;
+    writeDB(db);
+    res.status(200).json({ message: 'Update successful' });
 });
 
-// بدء الخادم
+// --- تشغيل الخادم ---
 app.listen(PORT, () => {
     initializeDatabase();
-    console.log(`
-    ====================================
-    الخادم يعمل على البورت ${PORT}
-    روابط مهمة:
-    - http://localhost:${PORT}/test
-    - http://localhost:${PORT}/api/trends
-    ====================================
-    `);
+    console.log(`Server is running on port ${PORT}`);
+    fetchAndUpdateYoutubeData();
+    setInterval(fetchAndUpdateYoutubeData, 6 * 60 * 60 * 1000);
 });
